@@ -128,7 +128,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     // PASO 4: Enviar transcripción al LLM (OpenRouter)
     console.log("Paso 4: Enviar transcripción al LLM...");
-    const OPENROUTER_API_KEY_ENV = "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";
+    const OPENROUTER_API_KEY_ENV = "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";
     if (!OPENROUTER_API_KEY_ENV) {
       console.error("Error crítico: La API Key de OpenRouter (OPENROUTER_API_KEY) no está configurada en .env.");
       return res.status(500).json({ error: "Configuración del servidor incompleta (API Key LLM)." });
