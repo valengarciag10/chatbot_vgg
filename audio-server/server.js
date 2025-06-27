@@ -14,6 +14,9 @@ const unlinkAsync = fs.promises.unlink;
 const statAsync = fs.promises.stat; 
 const mkdirAsync = fs.promises.mkdir;
 
+const dotenv = require('dotenv');
+dotenv.config();
+
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -22,6 +25,48 @@ app.use(express.json());
 
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 const TTS_OUTPUT_DIR = path.join(__dirname, "tts_outputs");
+const CHAT_HISTORY_PATH = path.join(__dirname, "chat_history.txt");
+
+const clearChatHistory = async () => {
+  try {
+    await fs.promises.writeFile(CHAT_HISTORY_PATH, "", "utf-8");
+    console.log("Historial de chat inicializado.");
+  } catch (err) {
+    console.error("Error al limpiar historial:", err);
+  }
+};
+
+
+
+const appendToHistory = async (pregunta, respuesta) => {
+  const entry = `Usuario: ${pregunta}\nAsistente: ${respuesta}\n\n`;
+  try {
+    await fs.promises.appendFile(CHAT_HISTORY_PATH, entry, "utf-8");
+    console.log("Interacción guardada.");
+  } catch (err) {
+    console.error("Error al guardar historial:", err);
+  }
+};
+
+
+const getRelevantHistory = async () => {
+  try {
+    const raw = await fs.promises.readFile(CHAT_HISTORY_PATH, "utf-8");
+    const blocks = raw.trim().split(/\n\s*\n/); 
+
+    if (blocks.length <= 10) {
+      return blocks.join("\n\n"); 
+    }
+
+    const firstFive = blocks.slice(0, 5);
+    const lastFive = blocks.slice(-5);
+    return [...firstFive, ...lastFive].join("\n\n");
+  } catch (err) {
+    console.error("Error al leer historial:", err);
+    return "";
+  }
+};
+
 
 // Función genérica para asegurar que un directorio exista
 const ensureDirExists = async (dirPath, dirNameForLog) => {
@@ -92,9 +137,9 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   const wavPath = path.join(UPLOADS_DIR, `${baseName}.wav`);
   const txtPath = path.join(UPLOADS_DIR, `${baseName}.txt`);
 
-  const filesToClean = [inputPath];
 
   console.log(`\n[${new Date().toISOString()}] Petición recibida. Procesando archivo: ${req.file.originalname}`);
+  let audioResponseLocalPathaux = null;
 
   try {
     // PASO 1: Convertir a WAV (ffmpeg)
@@ -128,39 +173,52 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     // PASO 4: Enviar transcripción al LLM (OpenRouter)
     console.log("Paso 4: Enviar transcripción al LLM...");
-    const OPENROUTER_API_KEY_ENV = "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";
+    const OPENROUTER_API_KEY_ENV = process.env.OPENROUTER_API_KEY_ENV;
     if (!OPENROUTER_API_KEY_ENV) {
       console.error("Error crítico: La API Key de OpenRouter (OPENROUTER_API_KEY) no está configurada en .env.");
       return res.status(500).json({ error: "Configuración del servidor incompleta (API Key LLM)." });
     }
+
+
+    const historyContext = await getRelevantHistory();
+
     const llmApiResponse = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
         model: "mistralai/mistral-7b-instruct",
         messages: [
-          { role: "system", content: "Eres un asistente virtual útil. Responde de forma clara y concisa. Se breve, no quiero mensajes muy largos" },
-          { role: "user", content: transcript },
+          { role: "system", content: "Eres un asistente útil. Responde de forma breve y clara."+
+            "Estas diseñado para ayudar a personas mayores, por lo tanto, tus respuestas deben ser simples y directas."+
+            "No uses tecnicismos ni jerga complicada. Evita respuestas largas y complejas."+
+            "Si no entiendes algo, pide aclaraciones en lugar de asumir."+
+            "Las ultimas interacciones del usuario son: " + historyContext
+           },
+          { role: "user", content: `${historyContext}\n\nUsuario: ${transcript}` },
         ],
       },
       {
         headers: {
-          "Authorization": `Bearer ${OPENROUTER_API_KEY_ENV}`,
+          Authorization: `Bearer ${OPENROUTER_API_KEY_ENV}`,
           "Content-Type": "application/json",
         },
         timeout: 45000,
       }
     );
+
+
     const llmResponseText = llmApiResponse.data?.choices?.[0]?.message?.content?.trim();
     if (!llmResponseText) {
       console.error("Respuesta inesperada o vacía del LLM:", llmApiResponse.data);
       return res.status(500).json({ error: "El modelo de lenguaje no devolvió una respuesta válida." });
     }
     console.log("Respuesta del LLM (texto):", llmResponseText);
+    await appendToHistory(transcript, llmResponseText);
+
 
     // PASO 5: Convertir respuesta de texto a audio (TTS usando gTTS script)
     let audioResponseUrl = null;
     let audioResponseLocalPath = null;
-    console.log("Paso 5.1: Generando audio de respuesta con script Python (gTTS)...");
+    console.log("Paso 5: Generando audio de respuesta con script Python (gTTS)...");
 
     if (llmResponseText) {
       const pythonTtsScriptPath = path.join(__dirname,'..','scripts', 'gtts_script.py');
@@ -170,31 +228,36 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
         const ttsFileName = `response-gtts-${Date.now()}.mp3`;
         audioResponseLocalPath = path.join(TTS_OUTPUT_DIR, ttsFileName);
-        // Escapar comillas y saltos de línea para el comando shell
+        audioResponseLocalPathaux= path.join(TTS_OUTPUT_DIR, ttsFileName);
+        console.log("Ruta de salida esperada para TTS:", audioResponseLocalPath);
+
+
         const escapedText = llmResponseText.replace(/"/g, '\\"').replace(/\n/g, ' ');
         const gttsCommand = `python "${pythonTtsScriptPath}" --text "${escapedText}" --output "${audioResponseLocalPath}" --lang "es"`;
 
-        const { stdout: gttsStdout, stderr: gttsStderr } = await execPromise(gttsCommand, { timeout: 20000 }); // Timeout de 20 segundos
+        const { stdout: gttsStdout, stderr: gttsStderr } = await execPromise(gttsCommand, { timeout: 20000 }); 
       
-        // AHORA, la verificación crucial:
+
         try {
-          const stats = await fs.promises.stat(audioResponseLocalPath); // Esto fallará si el archivo no existe
+          const stats = await fs.promises.stat(audioResponseLocalPath);
           if (stats.size > 0) {
             console.log(`VERIFICADO: Archivo ${audioResponseLocalPath} existe y tiene tamaño ${stats.size} bytes.`);
             audioResponseUrl = `/tts_audio/${ttsFileName}`;
           } else {
             console.error(`ERROR DE CREACIÓN DE ARCHIVO: Archivo ${audioResponseLocalPath} existe PERO ESTÁ VACÍO.`);
             audioResponseLocalPath = null;
+            audioResponseLocalPathaux=null;
             audioResponseUrl = null;
           }
         } catch (checkFileError) {
           console.error(`ERROR DE CREACIÓN DE ARCHIVO: Fallo al verificar ${audioResponseLocalPath} después de ejecutar gTTS script. El archivo probablemente no fue creado.`);
           console.error("Detalles del error de statAsync:", checkFileError.message);
-          audioResponseLocalPath = null; // Asegurar que no se use si no existe
+          audioResponseLocalPath = null; 
+          audioResponseLocalPathaux=null;
           audioResponseUrl = null;
         }
 
-      } catch (gttsError) { // Este catch es para errores al *ejecutar* el script o al *verificar la existencia del script mismo*
+      } catch (gttsError) { 
         if (gttsError.code === 'ENOENT' && gttsError.path === pythonTtsScriptPath) {
           console.warn(`Script gTTS (${pythonTtsScriptPath}) no encontrado. No se generará audio.`);
         } else if (gttsError.killed) {
@@ -222,6 +285,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       respuesta_texto: llmResponseText,
       respuesta_audio_url: audioResponseUrl,
     });
+    
 
   } catch (error) {
     console.error("------------------------------------");
@@ -250,20 +314,21 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       details: process.env.NODE_ENV === 'development' ? errorDetails : "Detalles adicionales ocultos.",
     });
   } finally {
+    const filesToClean = [inputPath,wavPath,txtPath];
+    console.log("Archivos a eliminar:", filesToClean);
     console.log("Limpiando archivos temporales...");
-    for (const filePath of filesToClean) {
-      try {
-        if (fs.existsSync(filePath)) {
-          await unlinkAsync(filePath);
-        }
-      } catch (unlinkError) {
-        if (unlinkError.code !== 'ENOENT') {
-          console.warn(`Advertencia: No se pudo borrar el archivo temporal ${filePath}:`, unlinkError.message);
+      for (const filePath of filesToClean) {
+        try {
+          if (fs.existsSync(filePath)) {
+            await unlinkAsync(filePath);
+            console.log(`Archivo eliminado: ${filePath}`);
+          }
+        } catch (unlinkError) {
+          console.warn(`Advertencia: No se pudo borrar el archivo ${filePath}: ${unlinkError.message}`);
         }
       }
-    }
-    console.log("Limpieza de archivos completada.");
-  }
+      console.log("Limpieza completada.");
+      }
 });
 
 // Middleware para manejar errores de Multer
@@ -282,11 +347,10 @@ app.use((err, req, res, next) => {
 const startServer = async () => {
   await ensureDirExists(UPLOADS_DIR, "uploads");
   await ensureDirExists(TTS_OUTPUT_DIR, "tts_outputs");
+  await clearChatHistory();
 
   app.listen(port, () => {
-    console.log(`\n Servidor Express corriendo en http://localhost:${port}`);
-    console.log(`   Directorio de subidas (uploads): ${UPLOADS_DIR}`);
-    console.log(`   Directorio de audios TTS (tts_outputs): ${TTS_OUTPUT_DIR}`);
+    console.log(`\n Servidor corriendo en http://localhost:${port}`);
     
   });
 };

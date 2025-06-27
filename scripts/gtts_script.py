@@ -4,7 +4,7 @@ import sys
 import os
 from pydub import AudioSegment
 
-def text_to_speech(text, output_path, lang='es', slow=False, volume_db=3000):
+def text_to_speech(text, output_path, lang='es', slow=False, volume_db=20):
     try:
         output_dir = os.path.dirname(output_path)
         if output_dir and not os.path.exists(output_dir):

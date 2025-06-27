@@ -1,24 +1,25 @@
-import React, { useState, useRef, useEffect } from 'react'; // Añadido useEffect
-import { View, Button, Text, Alert, Platform } from 'react-native'; // Añadido Platform
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Button, Text, Alert, Platform } from 'react-native';
 import { Audio } from 'expo-av';
 
 // --- CONFIGURACIÓN DEL SERVIDOR ---
-const SERVER_IP = "192.168.1.133"; 
-const SERVER_PORT = "5000";
+const SERVER_IP ="192.168.1.142";
+const SERVER_PORT = 5000;
 const SERVER_URL_UPLOAD = `http://${SERVER_IP}:${SERVER_PORT}/upload`;
-// ---------------------------------
 
 // Interfaz para la respuesta esperada del servidor
 interface ServerResponse {
   mensaje?: string;
-  respuesta_audio_url?: string; // Solo nos interesa esta por ahora para el audio
+  respuesta_texto?: string;
+  respuesta_audio_url?: string; 
 }
 
 const AudioRecorder = () => {
-  const [isRecording, setIsRecording] = useState(false); // Usaremos este estado para el botón
-  const [audioUri, setAudioUri] = useState<string | null>(null); // Para el URI del audio grabado
+  const [isRecording, setIsRecording] = useState(false);
+  const [audioUri, setAudioUri] = useState<string | null>(null);
+  const [serverMessage, setServerMessage] = useState<string | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
-  const soundObjectRef = useRef<Audio.Sound | null>(null); // Para controlar el audio de respuesta
+  const soundObjectRef = useRef<Audio.Sound | null>(null);
 
   // Limpieza: Descargar el objeto de sonido cuando el componente se desmonta
   useEffect(() => {
@@ -45,9 +46,7 @@ const AudioRecorder = () => {
 
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
-        playsInSilentModeIOS: true, // Importante para que el audio de respuesta se reproduzca
-        // interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX, // Opcional
-        // interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX, // Opcional
+        playsInSilentModeIOS: true, 
       });
 
       console.log("CLIENTE LOG: Iniciando grabación...");
@@ -63,7 +62,6 @@ const AudioRecorder = () => {
     }
   };
 
-  // Detener grabación y enviar al servidor
   const stopRecordingAndSend = async () => {
     if (!recordingRef.current) return;
     console.log("CLIENTE LOG: Deteniendo grabación...");
@@ -72,13 +70,13 @@ const AudioRecorder = () => {
     try {
       await recordingRef.current.stopAndUnloadAsync();
       const uri = recordingRef.current.getURI();
-      recordingRef.current = null; // Limpiar referencia
+      recordingRef.current = null;
 
-      setAudioUri(uri); // Mantienes esto para tu <Text> actual
+      setAudioUri(uri);
 
       if (uri) {
         console.log("CLIENTE LOG: Audio del usuario guardado en:", uri);
-        await sendAudioToServer(uri); // Llamar a enviar al servidor
+        await sendAudioToServer(uri);
       } else {
         console.error("CLIENTE ERROR: No se pudo obtener la URI del audio grabado.");
         Alert.alert("Error", "No se pudo obtener el audio grabado.");
@@ -95,7 +93,6 @@ const AudioRecorder = () => {
     console.log("CLIENTE LOG: Enviando audio al servidor...");
 
     const formData = new FormData();
-    // Corrección para nombre de archivo y tipo MIME más robusto
     const filename = uri.split('/').pop() || `audio-${Date.now()}.m4a`;
     let type;
 
@@ -104,7 +101,7 @@ const AudioRecorder = () => {
     } else if (filename.endsWith('.mp3')) {
       type = 'audio/mpeg';
     } else if (filename.endsWith('.m4a')) {
-      type = 'audio/mp4'; // m4a es parte de mp4
+      type = 'audio/mp4'; 
     } else if (filename.endsWith('.aac')) {
       type = 'audio/aac';
     } else if (filename.endsWith('.3gp')) {
@@ -117,7 +114,7 @@ const AudioRecorder = () => {
 
 
     formData.append("file", {
-      uri: Platform.OS === "android" ? uri : uri.replace("file://", ""), // Corrección común para iOS URI
+      uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
       name: filename,
       type: type,
     } as any);
@@ -126,14 +123,16 @@ const AudioRecorder = () => {
       const response = await fetch(SERVER_URL_UPLOAD, {
         method: "POST",
         body: formData,
-        // NO establecer 'Content-Type': 'multipart/form-data' aquí, fetch lo maneja.
       });
 
-      const result: ServerResponse = await response.json(); // Especificar el tipo de resultado
+      const result: ServerResponse = await response.json(); 
       console.log("CLIENTE LOG: Respuesta del servidor recibida:", JSON.stringify(result, null, 2));
 
       if (response.ok && result) {
-        Alert.alert("Servidor", result.mensaje || "Audio procesado correctamente"); // Mensaje al usuario
+
+        setServerMessage(result.respuesta_texto || "Audio procesado correctamente");
+
+        Alert.alert("Servidor", result.mensaje || "Audio procesado correctamente"); 
 
         // --- LÓGICA PARA REPRODUCIR AUDIO DE RESPUESTA ---
         const partialAudioUrl = result.respuesta_audio_url;
@@ -144,7 +143,6 @@ const AudioRecorder = () => {
         } else {
           console.log("CLIENTE LOG: No se recibió respuesta_audio_url del servidor.");
         }
-        // --------------------------------------------------
 
       } else {
         console.error("CLIENTE ERROR: Respuesta no OK del servidor o resultado inválido:", result);
@@ -156,11 +154,11 @@ const AudioRecorder = () => {
     }
   };
 
-  // Nueva función para reproducir el audio de respuesta
+  // Función para reproducir el audio de respuesta
   const playAudioResponse = async (audioUriToPlay: string) => {
     console.log("CLIENTE LOG: Intentando reproducir audio desde:", audioUriToPlay);
     try {
-      // Descargar cualquier sonido previo que estuviera cargado para la respuesta
+
       if (soundObjectRef.current) {
         console.log("CLIENTE LOG: Descargando sonido previo de respuesta...");
         await soundObjectRef.current.unloadAsync();
@@ -172,7 +170,7 @@ const AudioRecorder = () => {
         { uri: audioUriToPlay },
         { shouldPlay: true }
       );
-      soundObjectRef.current = sound; // Guardar referencia al nuevo sonido
+      soundObjectRef.current = sound; 
       console.log("CLIENTE LOG: Sonido cargado por createAsync. Estado inicial:", JSON.stringify(status, null, 2));
 
       sound.setOnPlaybackStatusUpdate((playbackStatus) => {
@@ -184,7 +182,7 @@ const AudioRecorder = () => {
         } else {
           if (playbackStatus.didJustFinish && !playbackStatus.isLooping) {
             console.log("CLIENTE LOG: Reproducción de respuesta completada.");
-            soundObjectRef.current?.unloadAsync(); // Descargar después de terminar
+            soundObjectRef.current?.unloadAsync();
             soundObjectRef.current = null;
           }
         }
@@ -212,7 +210,11 @@ const AudioRecorder = () => {
         title={isRecording ? "Detener Grabación" : "Iniciar Grabación"} 
         onPress={handleButtonPress} 
       />
-      {audioUri && <Text>Audio guardado en: {audioUri}</Text>}
+      {serverMessage && 
+      (<Text style={{ marginTop: 10, fontSize: 16, color: 'blue' }}>
+          {serverMessage}
+        </Text>
+      )}
     </View>
   );
 };
