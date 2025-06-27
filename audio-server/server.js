@@ -173,7 +173,11 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     // PASO 4: Enviar transcripción al LLM (OpenRouter)
     console.log("Paso 4: Enviar transcripción al LLM...");
+<<<<<<< HEAD:audio-server/server.js
     const OPENROUTER_API_KEY_ENV = process.env.OPENROUTER_API_KEY_ENV;
+=======
+    const OPENROUTER_API_KEY_ENV = "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";
+>>>>>>> 672cea0083cb31352e4f1bbf47803e3dffb8c08d:audio-server/server5.js
     if (!OPENROUTER_API_KEY_ENV) {
       console.error("Error crítico: La API Key de OpenRouter (OPENROUTER_API_KEY) no está configurada en .env.");
       return res.status(500).json({ error: "Configuración del servidor incompleta (API Key LLM)." });

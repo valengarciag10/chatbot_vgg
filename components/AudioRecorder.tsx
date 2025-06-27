@@ -3,8 +3,13 @@ import { View, Button, Text, Alert, Platform } from 'react-native';
 import { Audio } from 'expo-av';
 
 // --- CONFIGURACIÓN DEL SERVIDOR ---
+<<<<<<< HEAD
 const SERVER_IP ="192.168.1.142";
 const SERVER_PORT = 5000;
+=======
+const SERVER_IP = "192.168.15.100"; 
+const SERVER_PORT = "5000";
+>>>>>>> 672cea0083cb31352e4f1bbf47803e3dffb8c08d
 const SERVER_URL_UPLOAD = `http://${SERVER_IP}:${SERVER_PORT}/upload`;
 
 // Interfaz para la respuesta esperada del servidor
